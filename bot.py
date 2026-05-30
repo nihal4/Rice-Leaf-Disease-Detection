@@ -2,13 +2,16 @@
 # bot.py — Rice Leaf Disease Telegram Bot
 # 4 classes: Bacterial_Leaf_Blight, Brown_Spot, Leaf_Blast, Tungro
 # Compatible with python-telegram-bot 21.x and Python 3.14+
+# Runs as Render Web Service with health check endpoint
 # =============================================================================
 
 import asyncio
 import logging
 import os
 import sys
+import threading
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -48,6 +51,27 @@ DISEASE_EMOJI: dict[str, str] = {
     "Leaf_Blast":            "💥",
     "Tungro":                "🟡",
 }
+
+
+# =========================================================================== #
+# Health check server — satisfies Render web service port binding
+# =========================================================================== #
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK - Rice Disease Bot is running")
+
+    def log_message(self, format, *args):
+        pass  # suppress noisy HTTP access logs
+
+
+def start_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    logger.info("Health check server listening on port %d", port)
+    server.serve_forever()
 
 
 # =========================================================================== #
@@ -156,7 +180,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         timestamp, user_id, class_name, conf_pct,
     )
 
-    # Disease detected — send result immediately
+    # Send detection result immediately
     await wait_msg.edit_text(
         f"{emoji} *রোগ শনাক্ত হয়েছে!*\n\n"
         f"রোগের নাম: *{disease_bangla}*\n"
@@ -293,7 +317,16 @@ async def async_main() -> None:
             await app.stop()
 
 
+# =========================================================================== #
+# Entry point
+# =========================================================================== #
 def main() -> None:
+    # Start health check HTTP server in background thread
+    # This satisfies Render's port binding requirement for Web Services
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+
+    # Run the Telegram bot
     asyncio.run(async_main())
 
 
