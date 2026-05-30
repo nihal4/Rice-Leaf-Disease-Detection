@@ -24,7 +24,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # -----------------------------------------------------------------------------
 HF_MODEL_URL = os.getenv(
     "HF_MODEL_URL",
-    "https://huggingface.co/nihal4/rice-disease-model/resolve/main/rice_disease_resnet50.onnx"
+    ""
 )
 HF_TOKEN = os.getenv("HF_TOKEN", "")   # leave empty if repo is public
 
