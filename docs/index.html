@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rice Leaf Disease Detection Bot — ধান রোগ নির্ণয় বট</title>
+  <meta name="description" content="An AI-powered Telegram bot that instantly identifies rice leaf diseases from a photo and delivers treatment advice in Bangla — built for Bangladeshi farmers." />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.31.0/webfont/tabler-icons.min.css" />
+
+  <style>
+    /* ── Design tokens ───────────────────────────────────────── */
+    :root {
+      --color-text-primary:      #111827;
+      --color-text-secondary:    #6b7280;
+      --color-text-tertiary:     #9ca3af;
+      --color-background-primary:   #ffffff;
+      --color-background-secondary: #f9fafb;
+      --color-border-tertiary:   #e5e7eb;
+      --color-border-secondary:  #d1d5db;
+      --border-radius-lg:        12px;
+      --border-radius-md:        8px;
+      --font-sans: 'Space Grotesk', system-ui, sans-serif;
+      --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+
+    /* ── Reset ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-background-secondary);
+      color: var(--color-text-primary);
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Page wrapper ─────────────────────────────────────────── */
+    .readme {
+      font-family: var(--font-sans);
+      color: var(--color-text-primary);
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 0 3rem;
+    }
+
+    /* ── HERO ─────────────────────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0a3d1f 0%, #0c5132 40%, #0d6b43 70%, #116d3a 100%);
+      border-radius: var(--border-radius-lg);
+      padding: 2.5rem 2rem 2rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 2rem;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -60px; right: -60px;
+      width: 200px; height: 200px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.04);
+    }
+    .hero::after {
+      content: '';
+      position: absolute;
+      bottom: -40px; left: -40px;
+      width: 150px; height: 150px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .hero-logo {
+      width: 110px; height: 110px;
+      border-radius: 50%;
+      background: white;
+      margin: 0 auto 1.25rem;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      border: 3px solid rgba(255,255,255,0.3);
+      animation: logoPop 0.6s cubic-bezier(0.34,1.56,0.64,1) both;
+      font-size: 52px;
+    }
+    .hero-logo img { width: 100%; height: 100%; object-fit: cover; }
+
+    @keyframes logoPop {
+      from { transform: scale(0.5); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+
+    .hero-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      color: #a8e6c8;
+      font-size: 11px; font-weight: 500;
+      letter-spacing: 2px; text-transform: uppercase;
+      padding: 4px 14px;
+      border-radius: 20px;
+      border: 0.5px solid rgba(255,255,255,0.2);
+      margin-bottom: 0.75rem;
+      animation: fadeUp 0.5s 0.2s both;
+    }
+
+    .hero h1 {
+      font-size: 26px; font-weight: 700;
+      color: #ffffff; line-height: 1.2;
+      margin-bottom: 0.5rem;
+      animation: fadeUp 0.5s 0.3s both;
+    }
+    .hero h1 span { color: #5ee89a; }
+
+    .hero-bn {
+      font-family: 'Noto Sans Bengali', sans-serif;
+      font-size: 16px; color: rgba(255,255,255,0.7);
+      margin-bottom: 1.25rem;
+      animation: fadeUp 0.5s 0.4s both;
+    }
+
+    .hero-desc {
+      font-size: 14px; color: rgba(255,255,255,0.65);
+      max-width: 440px; margin: 0 auto 1.5rem;
+      line-height: 1.6;
+      animation: fadeUp 0.5s 0.5s both;
+    }
+
+    .hero-badges {
+      display: flex; gap: 8px; justify-content: center;
+      flex-wrap: wrap;
+      animation: fadeUp 0.5s 0.6s both;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 500;
+      border: 0.5px solid rgba(255,255,255,0.2);
+      color: #fff; background: rgba(255,255,255,0.1);
+    }
+    .badge-tg  { background: rgba(38,165,228,0.3); border-color: rgba(38,165,228,0.5); }
+    .badge-mit { background: rgba(255,193,7,0.2);  border-color: rgba(255,193,7,0.4); color: #fde68a; }
+
+    @keyframes fadeUp {
+      from { transform: translateY(16px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    /* ── SECTION ──────────────────────────────────────────────── */
+    .section { margin-bottom: 1.75rem; }
+    .section-header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 1rem; padding-bottom: 0.6rem;
+      border-bottom: 0.5px solid var(--color-border-tertiary);
+    }
+    .section-icon {
+      width: 32px; height: 32px;
+      border-radius: var(--border-radius-md);
+      background: #eaf3de;
+      display: flex; align-items: center; justify-content: center;
+      color: #3B6D11; font-size: 16px; flex-shrink: 0;
+    }
+    .section-title { font-size: 16px; font-weight: 500; color: var(--color-text-primary); }
+
+    /* ── FLOW ─────────────────────────────────────────────────── */
+    .flow { display: flex; flex-direction: column; gap: 0; }
+    .flow-step {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 14px 16px;
+      background: var(--color-background-primary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: 0; position: relative;
+      transition: background 0.2s;
+    }
+    .flow-step:first-child { border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0; }
+    .flow-step:last-child  { border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg); }
+    .flow-step:not(:last-child) { border-bottom: none; }
+    .flow-step:hover { background: var(--color-background-secondary); }
+
+    .flow-num {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: #eaf3de; color: #3B6D11;
+      font-size: 13px; font-weight: 500;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 1px;
+    }
+    .flow-label { font-size: 14px; font-weight: 500; color: var(--color-text-primary); }
+    .flow-sub   { font-size: 13px; color: var(--color-text-secondary); margin-top: 2px; }
+
+    /* ── DISEASE GRID ─────────────────────────────────────────── */
+    .disease-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .disease-card {
+      background: var(--color-background-primary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-lg);
+      padding: 14px; text-align: center;
+      transition: border-color 0.2s, transform 0.15s;
+      cursor: default;
+    }
+    .disease-card:hover { border-color: var(--color-border-secondary); transform: translateY(-2px); }
+    .disease-dot {
+      width: 36px; height: 36px; border-radius: 50%;
+      margin: 0 auto 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .disease-en { font-size: 12px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+    .disease-bn { font-family: 'Noto Sans Bengali', sans-serif; font-size: 11px; color: var(--color-text-secondary); }
+    .d-red    { background: #FCEBEB; }
+    .d-brown  { background: #FAEEDA; }
+    .d-blast  { background: #EAF3DE; }
+    .d-yellow { background: #FAEEDA; }
+
+    /* ── TECH STACK ───────────────────────────────────────────── */
+    .tech-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .tech-card {
+      background: var(--color-background-primary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-lg);
+      padding: 14px 16px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .tech-icon {
+      width: 36px; height: 36px;
+      border-radius: var(--border-radius-md);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .tech-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+    .tech-role { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+
+    /* ── SETUP ────────────────────────────────────────────────── */
+    .setup-steps { display: flex; flex-direction: column; gap: 10px; }
+    .setup-step {
+      background: var(--color-background-primary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-lg);
+      padding: 14px 16px;
+    }
+    .setup-step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .step-num {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #eaf3de; color: #3B6D11;
+      font-size: 11px; font-weight: 500;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .step-title { font-size: 14px; font-weight: 500; color: var(--color-text-primary); }
+    .code-block {
+      background: var(--color-background-secondary);
+      border-radius: var(--border-radius-md);
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px; color: var(--color-text-primary);
+      line-height: 1.7; white-space: pre; overflow-x: auto;
+    }
+
+    /* ── ENV TABLE ────────────────────────────────────────────── */
+    .env-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+    .env-table th {
+      text-align: left; font-weight: 500;
+      color: var(--color-text-secondary);
+      padding: 6px 10px; font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 0.5px solid var(--color-border-tertiary);
+    }
+    .env-table td {
+      padding: 8px 10px;
+      border-bottom: 0.5px solid var(--color-border-tertiary);
+      color: var(--color-text-primary); vertical-align: top;
+    }
+    .env-table tr:last-child td { border-bottom: none; }
+    .env-key { font-family: var(--font-mono); font-size: 11px; color: #3B6D11; }
+    .env-desc { color: var(--color-text-secondary); font-size: 12px; }
+
+    /* ── MODEL CARD ───────────────────────────────────────────── */
+    .model-card {
+      background: var(--color-background-primary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-lg);
+      padding: 18px 20px;
+      display: flex; align-items: center;
+      justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    }
+    .model-left { display: flex; align-items: center; gap: 14px; }
+    .hf-logo {
+      width: 44px; height: 44px;
+      border-radius: var(--border-radius-md);
+      background: #FFD21E;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+    }
+    .model-name { font-size: 14px; font-weight: 500; color: var(--color-text-primary); }
+    .model-sub  { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
+    .model-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 16px; background: #FFD21E; color: #412402;
+      border-radius: var(--border-radius-md);
+      font-size: 13px; font-weight: 500;
+      border: none; cursor: pointer; text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .model-btn:hover { opacity: 0.85; }
+
+    /* ── QR SECTION ───────────────────────────────────────────── */
+    .qr-section {
+      background: var(--color-background-primary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-lg);
+      padding: 20px;
+      display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    }
+    .qr-box {
+      width: 100px; height: 100px;
+      border: 1.5px dashed var(--color-border-secondary);
+      border-radius: var(--border-radius-md);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 6px; flex-shrink: 0;
+      color: var(--color-text-tertiary); font-size: 11px; text-align: center;
+    }
+    .qr-right { flex: 1; min-width: 180px; }
+    .qr-title { font-size: 15px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+    .qr-sub   { font-size: 13px; color: var(--color-text-secondary); line-height: 1.5; }
+    .tg-handle {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 10px; padding: 5px 12px;
+      background: #E6F1FB; color: #0C447C;
+      border-radius: 20px; font-size: 12px; font-weight: 500;
+    }
+
+    /* ── LICENSE ──────────────────────────────────────────────── */
+    .license-card {
+      background: var(--color-background-secondary);
+      border-radius: var(--border-radius-lg);
+      padding: 16px 20px;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .license-icon { font-size: 28px; }
+    .license-name { font-size: 14px; font-weight: 500; color: var(--color-text-primary); }
+    .license-sub  { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
+
+    /* ── FOOTER ───────────────────────────────────────────────── */
+    .footer {
+      text-align: center; padding-top: 1.5rem;
+      border-top: 0.5px solid var(--color-border-tertiary);
+      font-size: 13px; color: var(--color-text-tertiary);
+    }
+    .footer span { color: #E24B4A; }
+
+    /* ── Accessibility ────────────────────────────────────────── */
+    .sr-only {
+      position: absolute; width: 1px; height: 1px;
+      padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+  </style>
+</head>
+<body>
+
+<h2 class="sr-only">Rice Leaf Disease Detection Bot — interactive README</h2>
+
+<div class="readme">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-logo">
+      <img src="logo.png" alt="Bot logo" onerror="this.parentElement.innerHTML='🌾'" />
+    </div>
+    <div class="hero-badge">AI · Telegram Bot · Bangla</div>
+    <h1>Rice Leaf Disease <span>Detection</span></h1>
+    <div class="hero-bn">ধান রোগ নির্ণয় বট</div>
+    <p class="hero-desc">An AI-powered Telegram bot that instantly identifies rice leaf diseases from a photo and delivers treatment advice in Bangla — built for Bangladeshi farmers.</p>
+    <div class="hero-badges">
+      <span class="badge badge-tg"><i class="ti ti-brand-telegram" aria-hidden="true"></i> Telegram</span>
+      <span class="badge badge-mit">MIT License</span>
+      <span class="badge">বাংলা</span>
+      <span class="badge">Python 3.14+</span>
+    </div>
+  </div>
+
+  <!-- TRY THE BOT -->
+  <div class="section" style="animation-delay:0.1s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-qrcode" aria-hidden="true"></i></div>
+      <span class="section-title">Try the bot</span>
+    </div>
+    <div class="qr-section">
+      <div class="qr-box">
+        <img src="qr.jpg" alt="Telegram QR code" style="width:100%; height:100%; object-fit:contain;" />
+      </div>
+      <div class="qr-right">
+        <div class="qr-title">Scan to open on Telegram</div>
+        <div class="qr-sub">Farmers can scan it directly to start chatting with the bot.</div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span class="tg-handle"><i class="ti ti-brand-telegram" aria-hidden="true"></i> @Ricedisease_bd_bot</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <div class="section" style="animation-delay:0.15s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-arrows-exchange" aria-hidden="true"></i></div>
+      <span class="section-title">How it works</span>
+    </div>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-num">1</div>
+        <div><div class="flow-label">Take a photo</div><div class="flow-sub">Place the rice leaf on white paper and photograph it in good lighting</div></div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">2</div>
+        <div><div class="flow-label">Send to the bot</div><div class="flow-sub">Open Telegram, find the bot, and send the photo directly</div></div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">3</div>
+        <div><div class="flow-label">AI analyses the image</div><div class="flow-sub">A trained computer vision model classifies the disease with a confidence score</div></div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">4</div>
+        <div><div class="flow-label">Receive advice in Bangla</div><div class="flow-sub">Google Gemini generates full treatment guidance — medicines, steps, and prevention</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DISEASES -->
+  <div class="section" style="animation-delay:0.2s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-virus" aria-hidden="true"></i></div>
+      <span class="section-title">Diseases detected</span>
+    </div>
+    <div class="disease-grid">
+      <div class="disease-card">
+        <div class="disease-dot d-red">🔴</div>
+        <div class="disease-en">Bacterial Leaf Blight</div>
+        <div class="disease-bn">ব্যাকটেরিয়াল লিফ ব্লাইট</div>
+      </div>
+      <div class="disease-card">
+        <div class="disease-dot d-brown">🟤</div>
+        <div class="disease-en">Brown Spot</div>
+        <div class="disease-bn">ব্রাউন স্পট</div>
+      </div>
+      <div class="disease-card">
+        <div class="disease-dot d-blast">💥</div>
+        <div class="disease-en">Leaf Blast</div>
+        <div class="disease-bn">লিফ ব্লাস্ট</div>
+      </div>
+      <div class="disease-card">
+        <div class="disease-dot d-yellow">🟡</div>
+        <div class="disease-en">Tungro</div>
+        <div class="disease-bn">টুংরো</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODEL CARD -->
+  <div class="section" style="animation-delay:0.25s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-brain" aria-hidden="true"></i></div>
+      <span class="section-title">Model</span>
+    </div>
+    <div class="model-card">
+      <div class="model-left">
+        <div class="hf-logo">🤗</div>
+        <div>
+          <div class="model-name">Rice Leaf Disease Classifier</div>
+          <div class="model-sub">ONNX · CPU inference · hosted on Hugging Face Hub</div>
+        </div>
+      </div>
+      <a class="model-btn" href="https://huggingface.co/nihal4/rice-disease-model" target="_blank" rel="noopener">
+        View model card <i class="ti ti-external-link" aria-hidden="true"></i>
+      </a>
+    </div>
+  </div>
+
+  <!-- RUN IT -->
+  <div class="section" style="animation-delay:0.3s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-terminal" aria-hidden="true"></i></div>
+      <span class="section-title">Run it yourself</span>
+    </div>
+    <div class="setup-steps">
+      <div class="setup-step">
+        <div class="setup-step-header">
+          <div class="step-num">1</div>
+          <span class="step-title">Clone &amp; install</span>
+        </div>
+        <div class="code-block">https://github.com/nihal4/Rice-Leaf-Disease-Detection.git
+cd rice-leaf-disease-bot
+pip install -r requirements.txt</div>
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-header">
+          <div class="step-num">2</div>
+          <span class="step-title">Set environment variables</span>
+        </div>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><span class="env-key">TELEGRAM_BOT_TOKEN</span></td><td class="env-desc">From @BotFather on Telegram</td></tr>
+            <tr><td><span class="env-key">GEMINI_API_KEY</span></td><td class="env-desc">From Google AI Studio</td></tr>
+            <tr><td><span class="env-key">WEBHOOK_URL</span></td><td class="env-desc">Your public HTTPS deployment URL</td></tr>
+            <tr><td><span class="env-key">WEBHOOK_SECRET</span></td><td class="env-desc">Random secret, min 16 characters</td></tr>
+            <tr><td><span class="env-key">HF_MODEL_URL</span></td><td class="env-desc">Direct link to .onnx model on Hugging Face</td></tr>
+            <tr><td><span class="env-key">CLASS_INDICES_PATH</span></td><td class="env-desc">Path to class_indices.json</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-header">
+          <div class="step-num">3</div>
+          <span class="step-title">Start the bot</span>
+        </div>
+        <div class="code-block">python bot.py</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TECH STACK -->
+  <div class="section" style="animation-delay:0.35s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-stack" aria-hidden="true"></i></div>
+      <span class="section-title">Built with</span>
+    </div>
+    <div class="tech-grid">
+      <div class="tech-card">
+        <div class="tech-icon" style="background:#E6F1FB; font-size:20px;">✈️</div>
+        <div><div class="tech-name">Telegram Bot API</div><div class="tech-role">Chat interface</div></div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-icon" style="background:#EAF3DE; font-size:20px;">✨</div>
+        <div><div class="tech-name">Google Gemini 2.0</div><div class="tech-role">Bangla advice</div></div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-icon" style="background:#FAECE7; font-size:20px;">🔶</div>
+        <div><div class="tech-name">TensorFlow / Keras</div><div class="tech-role">Model training</div></div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-icon" style="background:#EEEDFE; font-size:20px;">⚡</div>
+        <div><div class="tech-name">ONNX Runtime</div><div class="tech-role">Fast CPU inference</div></div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-icon" style="background:#FAEEDA; font-size:20px;">🤗</div>
+        <div><div class="tech-name">Hugging Face</div><div class="tech-role">Model hosting</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LICENSE -->
+  <div class="section" style="animation-delay:0.4s">
+    <div class="section-header">
+      <div class="section-icon"><i class="ti ti-license" aria-hidden="true"></i></div>
+      <span class="section-title">License</span>
+    </div>
+    <div class="license-card">
+      <div class="license-icon">📄</div>
+      <div>
+        <div class="license-name">MIT License</div>
+        <div class="license-sub">Free to use, modify, and distribute. See LICENSE file for details.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">Made with <span>♥</span> for Bangladeshi rice farmers</div>
+</div>
+
+<script>
+  document.querySelectorAll('.section').forEach((el, i) => {
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+      el.style.transform = 'translateY(10px)';
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          el.style.opacity = '1';
+          el.style.transform = 'translateY(0)';
+        }, 80 * i);
+      });
+    }, 100);
+  });
+</script>
+
+</body>
+</html>
