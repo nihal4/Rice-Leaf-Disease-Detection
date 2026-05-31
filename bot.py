@@ -1,16 +1,20 @@
 # =============================================================================
-# bot.py — Rice Leaf Disease Telegram Bot
-# - Pure webhook mode (no polling conflict)
-# - aiohttp serves both the webhook endpoint AND /healthz on the same PORT
-# - Compatible with python-telegram-bot 21.x and Python 3.14+
+# bot.py — Rice Leaf Disease Telegram Bot  (secured)
+# - Pure webhook mode (no polling / no 409 Conflict)
+# - aiohttp serves webhook + /healthz on the same PORT
+# - Webhook secret validated on every incoming request
+# - Per-user rate limiting
+# - Keep-alive self-ping to prevent Render free-tier sleep
 # =============================================================================
 
 import asyncio
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 
+import aiohttp
 from aiohttp import web
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -28,7 +32,7 @@ from gemini_advisor import DISEASE_BANGLA, GeminiAdvisor
 from predictor import RiceLeafPredictor
 
 # --------------------------------------------------------------------------- #
-# Secure logging — suppress httpx so token never appears in logs
+# Logging — suppress httpx so the token never appears in logs
 # --------------------------------------------------------------------------- #
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -41,6 +45,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 logging.getLogger("uvicorn").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +53,10 @@ logger = logging.getLogger(__name__)
 # Globals
 # --------------------------------------------------------------------------- #
 predictor: RiceLeafPredictor | None = None
-gemini: GeminiAdvisor | None = None
+gemini: GeminiAdvisor | None        = None
+
+# Per-user rate limiting  {user_id: last_request_timestamp}
+_last_request: dict[int, float] = {}
 
 DISEASE_EMOJI: dict[str, str] = {
     "Bacterial_Leaf_Blight": "🔴",
@@ -109,14 +117,26 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # =========================================================================== #
-# Photo handler
+# Photo handler  (with rate limiting)
 # =========================================================================== #
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user      = update.effective_user
-    user_id   = user.id if user else "unknown"
-    chat_id   = update.effective_chat.id
+    user    = update.effective_user
+    user_id = user.id if user else 0
+    chat_id = update.effective_chat.id
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # ── Rate limiting ──────────────────────────────────────────────────────── #
+    now     = time.monotonic()
+    elapsed = now - _last_request.get(user_id, 0)
+    if elapsed < config.RATE_LIMIT_SECONDS:
+        wait = int(config.RATE_LIMIT_SECONDS - elapsed) + 1
+        await update.message.reply_text(
+            f"⏳ একটু অপেক্ষা করুন। {wait} সেকেন্ড পরে আবার চেষ্টা করুন।"
+        )
+        return
+    _last_request[user_id] = now
+
+    # ── Download image ─────────────────────────────────────────────────────── #
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
     wait_msg = await update.message.reply_text("⏳ ছবি বিশ্লেষণ করা হচ্ছে...")
 
@@ -136,6 +156,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await wait_msg.edit_text("❌ ছবি ডাউনলোড করা সম্ভব হয়নি। আবার চেষ্টা করুন।")
         return
 
+    # ── Run inference ──────────────────────────────────────────────────────── #
     try:
         result = predictor.predict(image_bytes, config.CONFIDENCE_THRESHOLD)
     except ValueError:
@@ -164,8 +185,8 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.MARKDOWN,
     )
 
+    # ── Get Gemini advice ──────────────────────────────────────────────────── #
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-
     try:
         advice_text = gemini.get_advice(class_name, confidence)
     except Exception as exc:
@@ -217,14 +238,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # =========================================================================== #
 def _validate_config() -> list[str]:
     errors = []
-    if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE":
-        errors.append("TELEGRAM_BOT_TOKEN is not set")
-    if not config.GEMINI_API_KEY or config.GEMINI_API_KEY == "PASTE_YOUR_GEMINI_API_KEY_HERE":
-        errors.append("GEMINI_API_KEY is not set")
-    if not config.WEBHOOK_URL or "yourdomain" in config.WEBHOOK_URL:
-        errors.append("WEBHOOK_URL is not set")
-    if "YOUR_HF_USERNAME" in config.HF_MODEL_URL:
-        errors.append("HF_MODEL_URL is not set")
+    if len(config.WEBHOOK_SECRET) < 16:
+        errors.append(
+            "WEBHOOK_SECRET must be at least 16 characters. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    if not config.WEBHOOK_URL.startswith("https://"):
+        errors.append("WEBHOOK_URL must start with https://")
     if not os.path.isfile(config.CLASS_INDICES_PATH):
         errors.append(f"Class indices not found: {config.CLASS_INDICES_PATH}")
     return errors
@@ -232,7 +252,7 @@ def _validate_config() -> list[str]:
 
 def _log_startup_info() -> None:
     token = config.TELEGRAM_BOT_TOKEN
-    token_preview = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "***"
+    token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
     logger.info("Bot token  : %s", token_preview)
     logger.info("Gemini key : SET ✅")
     logger.info("Webhook URL: %s", config.WEBHOOK_URL)
@@ -240,27 +260,56 @@ def _log_startup_info() -> None:
 
 
 # =========================================================================== #
-# aiohttp request handlers
+# aiohttp handlers
 # =========================================================================== #
 async def handle_webhook(request: web.Request) -> web.Response:
-    """Receive Telegram updates via POST."""
-    app_ptb: Application = request.app["ptb_app"]
+    """
+    Receive Telegram updates via POST.
+    Validates X-Telegram-Bot-Api-Secret-Token on every request so only
+    Telegram's servers can trigger the bot — not arbitrary internet traffic.
+    """
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if secret_header != config.WEBHOOK_SECRET:
+        logger.warning("Rejected webhook request — invalid or missing secret header.")
+        return web.Response(status=403, text="Forbidden")
+
+    ptb_app: Application = request.app["ptb_app"]
     try:
-        data = await request.json()
-        update = Update.de_json(data, app_ptb.bot)
-        await app_ptb.process_update(update)
+        data   = await request.json()
+        update = Update.de_json(data, ptb_app.bot)
+        await ptb_app.process_update(update)
     except Exception as exc:
         logger.error("Webhook processing error: %s", exc)
     return web.Response(text="OK")
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """Health check — Render uses this to show 'Live'."""
+    """Health check — Render uses GET / or /healthz to show 'Live'."""
     return web.Response(text="OK")
 
 
 # =========================================================================== #
-# Main — single aiohttp server for both webhook + health on PORT
+# Keep-alive — prevents Render free-tier from sleeping
+# =========================================================================== #
+async def _keep_alive() -> None:
+    """Ping /healthz every 10 minutes so Render free tier stays warm."""
+    await asyncio.sleep(60)
+    health_url = config.WEBHOOK_URL.rstrip("/") + "/healthz"
+    logger.info("Keep-alive task started — pinging %s every 10 min", health_url)
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(
+                    health_url, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    logger.debug("Keep-alive ping → %s", resp.status)
+            except Exception as exc:
+                logger.debug("Keep-alive ping failed (harmless): %s", exc)
+            await asyncio.sleep(600)
+
+
+# =========================================================================== #
+# Main
 # =========================================================================== #
 async def async_main() -> None:
     global predictor, gemini
@@ -293,11 +342,10 @@ async def async_main() -> None:
     except Exception:
         logger.warning("Gemini init failed — fallback advice will be used.")
 
-    # Build the PTB application (NO updater — webhook only)
     ptb_app: Application = (
         ApplicationBuilder()
         .token(config.TELEGRAM_BOT_TOKEN)
-        .updater(None)          # ← disables the built-in Updater/polling
+        .updater(None)
         .build()
     )
 
@@ -313,32 +361,31 @@ async def async_main() -> None:
     webhook_path = f"/webhook/{config.WEBHOOK_SECRET}"
     webhook_full = f"{config.WEBHOOK_URL}{webhook_path}"
 
-    # Build aiohttp app
     web_app = web.Application()
     web_app["ptb_app"] = ptb_app
-    web_app.router.add_post(webhook_path, handle_webhook)
-    web_app.router.add_get("/healthz", handle_health)
-    # Render also probes "/" sometimes
-    web_app.router.add_get("/", handle_health)
+    web_app.router.add_post(webhook_path,  handle_webhook)
+    web_app.router.add_get("/healthz",     handle_health)
+    web_app.router.add_get("/",            handle_health)
 
     logger.info("Starting on port %d | webhook path: /webhook/***", port)
     print(f"\n🌾 Rice Disease Bot starting on port {port}\n")
 
     async with ptb_app:
-        # Register the webhook with Telegram
         await ptb_app.bot.set_webhook(
             url=webhook_full,
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
+            secret_token=config.WEBHOOK_SECRET,
         )
         await ptb_app.start()
         logger.info("Bot is live ✅")
 
-        # Run aiohttp server until interrupted
         runner = web.AppRunner(web_app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
+
+        asyncio.create_task(_keep_alive())
 
         try:
             await asyncio.Event().wait()

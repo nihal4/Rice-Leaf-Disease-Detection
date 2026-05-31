@@ -30,19 +30,9 @@ class RiceLeafPredictor:
         image_size: tuple,
         cache_dir: str = "models/cache",
     ):
-        """
-        Parameters
-        ----------
-        hf_model_url       : Full URL to the .onnx file on Hugging Face
-                             e.g. https://huggingface.co/YOUR_USER/rice-disease-model/resolve/main/rice_disease_resnet50.onnx
-        hf_token           : Hugging Face read token (for private repos; can be empty for public)
-        class_indices_path : path to class_indices.json
-        image_size         : (width, height) e.g. (224, 224)
-        cache_dir          : local folder to cache the downloaded model
-        """
-        self.image_size = image_size
+        self.image_size  = image_size
         self.hf_model_url = hf_model_url
-        self.hf_token = hf_token
+        self.hf_token    = hf_token
 
         # ------------------------------------------------------------------ #
         # Load class indices
@@ -98,10 +88,12 @@ class RiceLeafPredictor:
             headers["Authorization"] = f"Bearer {self.hf_token}"
 
         try:
-            response = requests.get(self.hf_model_url, headers=headers, stream=True, timeout=120)
+            response = requests.get(
+                self.hf_model_url, headers=headers, stream=True, timeout=120
+            )
             response.raise_for_status()
 
-            total = int(response.headers.get("content-length", 0))
+            total      = int(response.headers.get("content-length", 0))
             downloaded = 0
 
             with open(self.cached_model_path, "wb") as f:
@@ -110,21 +102,31 @@ class RiceLeafPredictor:
                     downloaded += len(chunk)
                     if total:
                         pct = downloaded / total * 100
-                        print(f"\r   {pct:.1f}% ({downloaded // (1024*1024)} MB / {total // (1024*1024)} MB)", end="", flush=True)
+                        print(
+                            f"\r   {pct:.1f}% "
+                            f"({downloaded // (1024*1024)} MB / {total // (1024*1024)} MB)",
+                            end="",
+                            flush=True,
+                        )
 
             print(f"\n✅ Model downloaded and cached at: {self.cached_model_path}")
-            logger.info("Model downloaded: %.1f MB", os.path.getsize(self.cached_model_path) / (1024*1024))
+            logger.info(
+                "Model downloaded: %.1f MB",
+                os.path.getsize(self.cached_model_path) / (1024 * 1024),
+            )
 
-        except requests.exceptions.RequestException as exc:
-            # Clean up partial download
+        except Exception as exc:
+            # FIX: catch ALL exceptions (including KeyboardInterrupt / SIGTERM)
+            # so a partial download is never left on disk to corrupt the cache.
             if os.path.isfile(self.cached_model_path):
                 os.remove(self.cached_model_path)
+                logger.warning("Partial model file removed from cache.")
             raise RuntimeError(
                 f"Failed to download model from Hugging Face.\n"
                 f"URL: {self.hf_model_url}\n"
                 f"Error: {exc}\n\n"
                 "Check that:\n"
-                "1. HF_MODEL_URL is correct in config.py\n"
+                "1. HF_MODEL_URL is correct\n"
                 "2. The model repo is public (or HF_TOKEN is set)\n"
             ) from exc
 
@@ -150,8 +152,8 @@ class RiceLeafPredictor:
 
     def predict(self, image_bytes: bytes, confidence_threshold: float = 0.50) -> dict:
         preprocessed = self.preprocess_image(image_bytes)
-        outputs = self.session.run([self.output_name], {self.input_name: preprocessed})
-        probs = outputs[0][0]
+        outputs      = self.session.run([self.output_name], {self.input_name: preprocessed})
+        probs        = outputs[0][0]
 
         predicted_idx = int(np.argmax(probs))
         confidence    = float(probs[predicted_idx])
