@@ -48,9 +48,9 @@ IMAGE_SIZE         = (224, 224)
 # -----------------------------------------------------------------------------
 # Bot behaviour
 # -----------------------------------------------------------------------------
-MAX_IMAGE_SIZE_MB    = 30
+MAX_IMAGE_SIZE_MB    = 10
 CONFIDENCE_THRESHOLD = 0.50
-RATE_LIMIT_SECONDS   = 5       # min seconds between requests per user
+RATE_LIMIT_SECONDS   = 30       # min seconds between requests per user
 
 # -----------------------------------------------------------------------------
 # Logging — never set to DEBUG in production (may expose request details)
