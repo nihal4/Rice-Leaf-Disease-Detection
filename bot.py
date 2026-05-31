@@ -1,17 +1,15 @@
 # =============================================================================
 # bot.py — Rice Leaf Disease Telegram Bot
-# 4 classes: Bacterial_Leaf_Blight, Brown_Spot, Leaf_Blast, Tungro
-# Compatible with python-telegram-bot 21.x and Python 3.14+
-# Runs as Render Web Service with health check endpoint
+# - Webhook mode (Telegram pushes messages → wakes Render instantly)
+# - Security hardened (no token in logs, secrets redacted)
+# - Compatible with python-telegram-bot 21.x and Python 3.14+
 # =============================================================================
 
 import asyncio
 import logging
 import os
 import sys
-import threading
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -29,7 +27,7 @@ from gemini_advisor import DISEASE_BANGLA, GeminiAdvisor
 from predictor import RiceLeafPredictor
 
 # --------------------------------------------------------------------------- #
-# Logging
+# Secure logging — suppress httpx (hides token from logs), redact secrets
 # --------------------------------------------------------------------------- #
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -37,6 +35,11 @@ logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
     stream=sys.stdout,
 )
+# Silence httpx entirely — it logs full URLs including the bot token
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -54,31 +57,10 @@ DISEASE_EMOJI: dict[str, str] = {
 
 
 # =========================================================================== #
-# Health check server — satisfies Render web service port binding
-# =========================================================================== #
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK - Rice Disease Bot is running")
-
-    def log_message(self, format, *args):
-        pass  # suppress noisy HTTP access logs
-
-
-def start_health_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    logger.info("Health check server listening on port %d", port)
-    server.serve_forever()
-
-
-# =========================================================================== #
 # /start
 # =========================================================================== #
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = (
+    await update.message.reply_text(
         "🌾 *ধান রোগ নির্ণয় বট-এ স্বাগতম!*\n\n"
         "আমি আপনার ধান গাছের পাতার ছবি দেখে রোগ "
         "শনাক্ত করতে পারি এবং চিকিৎসার পরামর্শ দিতে পারি।\n\n"
@@ -91,16 +73,16 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "🟤 ব্রাউন স্পট\n"
         "💥 লিফ ব্লাস্ট\n"
         "🟡 টুংরো\n\n"
-        "এখনই একটি পাতার ছবি পাঠান! 👇"
+        "এখনই একটি পাতার ছবি পাঠান! 👇",
+        parse_mode=ParseMode.MARKDOWN,
     )
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
 
 # =========================================================================== #
 # /help
 # =========================================================================== #
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = (
+    await update.message.reply_text(
         "ℹ️ *সাহায্য / Help*\n\n"
         "📸 *ভালো ছবি তোলার নিয়ম:*\n"
         "• পাতাটি সাদা কাগজের উপর রাখুন\n"
@@ -119,9 +101,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "২. 🟤 ব্রাউন স্পট\n"
         "৩. 💥 লিফ ব্লাস্ট\n"
         "৪. 🟡 টুংরো\n\n"
-        "📞 গুরুতর সমস্যায় স্থানীয় কৃষি অফিসে যোগাযোগ করুন।"
+        "📞 গুরুতর সমস্যায় স্থানীয় কৃষি অফিসে যোগাযোগ করুন।",
+        parse_mode=ParseMode.MARKDOWN,
     )
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
 
 # =========================================================================== #
@@ -152,7 +134,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         image_bytes = bytes(await photo_file.download_as_bytearray())
 
     except Exception as exc:
-        logger.error("[%s] user_id=%s | Download error: %s", timestamp, user_id, exc)
+        logger.error("user_id=%s | Download error: %s", user_id, exc)
         await wait_msg.edit_text("❌ ছবি ডাউনলোড করা সম্ভব হয়নি। আবার চেষ্টা করুন।")
         return
 
@@ -160,11 +142,11 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         result = predictor.predict(image_bytes, config.CONFIDENCE_THRESHOLD)
     except ValueError as exc:
-        logger.error("[%s] user_id=%s | Image decode error: %s", timestamp, user_id, exc)
+        logger.error("user_id=%s | Image decode error: %s", user_id, exc)
         await wait_msg.edit_text("❌ ছবিটি পড়া সম্ভব হয়নি। ভিন্ন ছবি পাঠান।")
         return
     except Exception as exc:
-        logger.error("[%s] user_id=%s | Prediction error: %s", timestamp, user_id, exc)
+        logger.error("user_id=%s | Prediction error: %s", user_id, exc)
         await wait_msg.edit_text("❌ দুঃখিত, ছবিটি বিশ্লেষণ করা সম্ভব হয়নি। আবার চেষ্টা করুন।")
         return
 
@@ -175,12 +157,10 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     disease_bangla = DISEASE_BANGLA.get(class_name, class_name)
     emoji          = DISEASE_EMOJI.get(class_name, "🌿")
 
-    logger.info(
-        "[%s] user_id=%s | disease=%s | confidence=%.1f%%",
-        timestamp, user_id, class_name, conf_pct,
-    )
+    # Log safely — no tokens, no sensitive data
+    logger.info("[%s] user_id=%s | disease=%s | confidence=%.1f%%",
+                timestamp, user_id, class_name, conf_pct)
 
-    # Send detection result immediately
     await wait_msg.edit_text(
         f"{emoji} *রোগ শনাক্ত হয়েছে!*\n\n"
         f"রোগের নাম: *{disease_bangla}*\n"
@@ -191,11 +171,10 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
-    # Gemini advice
     try:
         advice_text = gemini.get_advice(class_name, confidence)
     except Exception as exc:
-        logger.error("[%s] user_id=%s | Gemini error: %s", timestamp, user_id, exc)
+        logger.error("user_id=%s | Gemini error: %s", user_id, exc)
         advice_text = (
             "দুঃখিত, এই মুহূর্তে পরামর্শ পাওয়া সম্ভব হচ্ছে না।\n"
             "স্থানীয় কৃষি বিশেষজ্ঞের সাথে যোগাযোগ করুন।"
@@ -232,31 +211,45 @@ async def non_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Error handler
 # =========================================================================== #
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
+    # Log error type only — never log the full exception which may contain secrets
+    logger.error("Unhandled error: %s", type(context.error).__name__)
     if isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text(
-            "❌ দুঃখিত, ছবিটি বিশ্লেষণ করা সম্ভব হয়নি। আবার চেষ্টা করুন।"
+            "❌ দুঃখিত, একটি সমস্যা হয়েছে। আবার চেষ্টা করুন।"
         )
 
 
 # =========================================================================== #
-# Startup validation
+# Startup validation — never prints secret values, only confirms presence
 # =========================================================================== #
 def _validate_config() -> list[str]:
     errors = []
-    if config.TELEGRAM_BOT_TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE":
+    if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE":
         errors.append("TELEGRAM_BOT_TOKEN is not set")
-    if config.GEMINI_API_KEY == "PASTE_YOUR_GEMINI_API_KEY_HERE":
+    if not config.GEMINI_API_KEY or config.GEMINI_API_KEY == "PASTE_YOUR_GEMINI_API_KEY_HERE":
         errors.append("GEMINI_API_KEY is not set")
+    if not config.WEBHOOK_URL or "yourdomain" in config.WEBHOOK_URL:
+        errors.append("WEBHOOK_URL is not set in environment variables")
     if "YOUR_HF_USERNAME" in config.HF_MODEL_URL:
-        errors.append("HF_MODEL_URL is not set — replace YOUR_HF_USERNAME in config.py")
+        errors.append("HF_MODEL_URL is not set")
     if not os.path.isfile(config.CLASS_INDICES_PATH):
         errors.append(f"Class indices file not found: {config.CLASS_INDICES_PATH}")
     return errors
 
 
+def _log_startup_info() -> None:
+    """Log config summary with secrets redacted."""
+    token = config.TELEGRAM_BOT_TOKEN
+    token_preview = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "***"
+    gemini_preview = "SET ✅" if config.GEMINI_API_KEY else "NOT SET ❌"
+    logger.info("Bot token  : %s", token_preview)
+    logger.info("Gemini key : %s", gemini_preview)
+    logger.info("Webhook URL: %s", config.WEBHOOK_URL)
+    logger.info("HF Model   : %s", config.HF_MODEL_URL)
+
+
 # =========================================================================== #
-# Async main — Python 3.14 compatible
+# Async main — webhook mode
 # =========================================================================== #
 async def async_main() -> None:
     global predictor, gemini
@@ -269,7 +262,9 @@ async def async_main() -> None:
         print()
         sys.exit(1)
 
-    logger.info("Initialising ResNet50 predictor…")
+    _log_startup_info()
+
+    logger.info("Initialising predictor…")
     try:
         predictor = RiceLeafPredictor(
             hf_model_url=config.HF_MODEL_URL,
@@ -286,7 +281,7 @@ async def async_main() -> None:
     try:
         gemini = GeminiAdvisor(api_key=config.GEMINI_API_KEY)
     except Exception as exc:
-        logger.warning("Gemini init failed (%s) — fallback advice will be used.", exc)
+        logger.warning("Gemini init failed — fallback advice will be used.")
 
     app: Application = (
         ApplicationBuilder()
@@ -302,12 +297,27 @@ async def async_main() -> None:
     )
     app.add_error_handler(error_handler)
 
-    print("\n🌾 Rice Disease Bot is running! Press Ctrl+C to stop.\n")
+    # Webhook path uses a secret token so only Telegram can hit it
+    webhook_path = f"/webhook/{config.WEBHOOK_SECRET}"
+    port         = int(os.environ.get("PORT", 8080))
+
+    logger.info("Starting webhook on port %d at path /webhook/***", port)
+    print(f"\n🌾 Rice Disease Bot starting (webhook mode) on port {port}\n")
 
     async with app:
+        await app.bot.set_webhook(
+            url=f"{config.WEBHOOK_URL}{webhook_path}",
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,   # ignore messages sent while bot was down
+        )
         await app.start()
-        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        logger.info("Bot is polling. Press Ctrl+C to stop.")
+        await app.updater.start_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=webhook_path,
+            webhook_url=f"{config.WEBHOOK_URL}{webhook_path}",
+        )
+        logger.info("Webhook registered. Bot is live.")
         try:
             await asyncio.Event().wait()
         except (KeyboardInterrupt, SystemExit):
@@ -315,18 +325,10 @@ async def async_main() -> None:
         finally:
             await app.updater.stop()
             await app.stop()
+            logger.info("Bot stopped cleanly.")
 
 
-# =========================================================================== #
-# Entry point
-# =========================================================================== #
 def main() -> None:
-    # Start health check HTTP server in background thread
-    # This satisfies Render's port binding requirement for Web Services
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
-
-    # Run the Telegram bot
     asyncio.run(async_main())
 
 

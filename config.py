@@ -1,38 +1,49 @@
 # =============================================================================
-# config.py — All configuration for Rice Disease Bot
+# config.py — All configuration. Secrets loaded from environment only.
+# NEVER hardcode secrets here — use Render environment variables or .env
 # =============================================================================
 
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
 
+def _require(key: str) -> str:
+    """Get env var or exit with a clear message — never expose the value."""
+    val = os.getenv(key, "")
+    return val
+
 # -----------------------------------------------------------------------------
 # Telegram
 # -----------------------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_BOT_TOKEN = _require("TELEGRAM_BOT_TOKEN")
+
+# Webhook settings (required for Render web service)
+# WEBHOOK_URL = your Render public URL, e.g. https://rice-bot.onrender.com
+WEBHOOK_URL    = os.getenv("WEBHOOK_URL", "")
+# Random secret so only Telegram can POST to your webhook endpoint
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 # -----------------------------------------------------------------------------
 # Gemini
 # -----------------------------------------------------------------------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY = _require("GEMINI_API_KEY")
 
 # -----------------------------------------------------------------------------
-# Hugging Face — model hosted remotely, downloaded once and cached locally
-# HF_MODEL_URL format:
-#   https://huggingface.co/YOUR_HF_USERNAME/rice-disease-model/resolve/main/rice_disease_resnet50.onnx
+# Hugging Face
 # -----------------------------------------------------------------------------
 HF_MODEL_URL = os.getenv(
     "HF_MODEL_URL",
     ""
 )
-HF_TOKEN = os.getenv("HF_TOKEN", "")   # leave empty if repo is public
+HF_TOKEN = os.getenv("HF_TOKEN", "")  # empty = public repo
 
 # -----------------------------------------------------------------------------
 # Model
 # -----------------------------------------------------------------------------
-CLASS_INDICES_PATH = os.getenv("CLASS_INDICES_PATH", "models/class_indices.json")
-MODEL_CACHE_DIR    = os.getenv("MODEL_CACHE_DIR",    "models/cache")
+CLASS_INDICES_PATH = os.getenv("CLASS_INDICES_PATH", "")
+MODEL_CACHE_DIR    = os.getenv("MODEL_CACHE_DIR",    "")
 IMAGE_SIZE         = (224, 224)
 
 # -----------------------------------------------------------------------------
@@ -42,6 +53,6 @@ MAX_IMAGE_SIZE_MB    = 10
 CONFIDENCE_THRESHOLD = 0.50
 
 # -----------------------------------------------------------------------------
-# Logging
+# Logging — never set to DEBUG in production (may expose request details)
 # -----------------------------------------------------------------------------
-LOG_LEVEL = "INFO"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "")
