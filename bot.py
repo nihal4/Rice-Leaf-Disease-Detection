@@ -128,14 +128,14 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # ── Rate limiting ──────────────────────────────────────────────────────── #
     now     = time.monotonic()
     elapsed = now - _last_request.get(user_id, 0)
-    _last_request[user_id] = now
+    
     if elapsed < config.RATE_LIMIT_SECONDS:
         wait = int(config.RATE_LIMIT_SECONDS - elapsed) + 1
         await update.message.reply_text(
             f"⏳ একটু অপেক্ষা করুন। {wait} সেকেন্ড পরে আবার চেষ্টা করুন।"
         )
         return
-    
+    _last_request[user_id] = now
 
     # ── Download image ─────────────────────────────────────────────────────── #
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
