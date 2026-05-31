@@ -1,8 +1,8 @@
 # =============================================================================
 # bot.py — Rice Leaf Disease Telegram Bot
-# - Webhook mode (instant wake-up, no polling)
-# - Health check endpoint on / (makes Render show "Live")
-# - Security hardened (no token in logs, secrets redacted)
+# - Webhook mode (instant wake-up)
+# - Separate health check HTTP server on /healthz (makes Render show "Live")
+# - Security hardened (no token in logs)
 # - Compatible with python-telegram-bot 21.x and Python 3.14+
 # =============================================================================
 
@@ -10,7 +10,9 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -28,7 +30,7 @@ from gemini_advisor import DISEASE_BANGLA, GeminiAdvisor
 from predictor import RiceLeafPredictor
 
 # --------------------------------------------------------------------------- #
-# Secure logging — suppress httpx (hides token from logs)
+# Secure logging — suppress httpx so token never appears in logs
 # --------------------------------------------------------------------------- #
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -56,6 +58,33 @@ DISEASE_EMOJI: dict[str, str] = {
     "Leaf_Blast":            "💥",
     "Tungro":                "🟡",
 }
+
+
+# =========================================================================== #
+# Health check server — runs on HEALTH_PORT (separate from webhook port)
+# GET /healthz → 200 OK  (Render uses this to show "Live")
+# No secret needed — returns no sensitive data
+# =========================================================================== #
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # suppress access logs
+
+
+def _run_health_server():
+    health_port = int(os.environ.get("HEALTH_PORT", 8080))
+    server = HTTPServer(("0.0.0.0", health_port), HealthHandler)
+    logger.info("Health check server on port %d at /healthz", health_port)
+    server.serve_forever()
 
 
 # =========================================================================== #
@@ -205,7 +234,6 @@ async def non_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Error handler
 # =========================================================================== #
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Log error type only — never log full exception (may contain secrets)
     logger.error("Unhandled error: %s", type(context.error).__name__)
     if isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text(
@@ -214,7 +242,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =========================================================================== #
-# Startup validation — never prints secret values
+# Startup validation
 # =========================================================================== #
 def _validate_config() -> list[str]:
     errors = []
@@ -232,7 +260,6 @@ def _validate_config() -> list[str]:
 
 
 def _log_startup_info() -> None:
-    """Log config summary — secrets redacted."""
     token = config.TELEGRAM_BOT_TOKEN
     token_preview = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "***"
     logger.info("Bot token  : %s", token_preview)
@@ -242,7 +269,7 @@ def _log_startup_info() -> None:
 
 
 # =========================================================================== #
-# Async main — webhook mode with health check on /
+# Async main — webhook on PORT, health check on HEALTH_PORT
 # =========================================================================== #
 async def async_main() -> None:
     global predictor, gemini
@@ -289,11 +316,13 @@ async def async_main() -> None:
     )
     app.add_error_handler(error_handler)
 
-    port           = int(os.environ.get("PORT", 8080))
-    webhook_path   = f"/webhook/{config.WEBHOOK_SECRET}"
-    webhook_full   = f"{config.WEBHOOK_URL}{webhook_path}"
+    # Render assigns PORT for the main service port
+    # We use the same PORT for webhook (Telegram) + health check
+    port         = int(os.environ.get("PORT", 10000))
+    webhook_path = f"/webhook/{config.WEBHOOK_SECRET}"
+    webhook_full = f"{config.WEBHOOK_URL}{webhook_path}"
 
-    logger.info("Starting webhook on port %d", port)
+    logger.info("Starting on port %d | webhook path: /webhook/***", port)
     print(f"\n🌾 Rice Disease Bot starting on port {port}\n")
 
     async with app:
@@ -303,20 +332,13 @@ async def async_main() -> None:
             drop_pending_updates=True,
         )
         await app.start()
-
-        # start_webhook serves:
-        #   POST /webhook/<secret>  ← Telegram messages (secure)
-        #   GET  /healthz           ← Render health check (returns 200)
         await app.updater.start_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=webhook_path,
             webhook_url=webhook_full,
-            # Built-in health check path — returns 200 OK, no secret needed
-            health_check_url_path="/healthz",
         )
-
-        logger.info("Bot is live. Webhook registered.")
+        logger.info("Bot is live ✅")
 
         try:
             await asyncio.Event().wait()
@@ -329,6 +351,11 @@ async def async_main() -> None:
 
 
 def main() -> None:
+    # Health check server in background thread — Render needs a port to bind
+    # GET /healthz → 200 OK (no secrets exposed)
+    health_thread = threading.Thread(target=_run_health_server, daemon=True)
+    health_thread.start()
+
     asyncio.run(async_main())
 
 
