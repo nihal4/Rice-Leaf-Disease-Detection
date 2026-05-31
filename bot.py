@@ -1,8 +1,7 @@
 # =============================================================================
 # bot.py — Rice Leaf Disease Telegram Bot
-# - Webhook mode (instant wake-up)
-# - Separate health check HTTP server on /healthz (makes Render show "Live")
-# - Security hardened (no token in logs)
+# - Pure webhook mode (no polling conflict)
+# - aiohttp serves both the webhook endpoint AND /healthz on the same PORT
 # - Compatible with python-telegram-bot 21.x and Python 3.14+
 # =============================================================================
 
@@ -10,10 +9,9 @@ import asyncio
 import logging
 import os
 import sys
-import threading
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from aiohttp import web
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
@@ -58,33 +56,6 @@ DISEASE_EMOJI: dict[str, str] = {
     "Leaf_Blast":            "💥",
     "Tungro":                "🟡",
 }
-
-
-# =========================================================================== #
-# Health check server — runs on HEALTH_PORT (separate from webhook port)
-# GET /healthz → 200 OK  (Render uses this to show "Live")
-# No secret needed — returns no sensitive data
-# =========================================================================== #
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/healthz":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"OK")
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, format, *args):
-        pass  # suppress access logs
-
-
-def _run_health_server():
-    health_port = int(os.environ.get("HEALTH_PORT", 8080))
-    server = HTTPServer(("0.0.0.0", health_port), HealthHandler)
-    logger.info("Health check server on port %d at /healthz", health_port)
-    server.serve_forever()
 
 
 # =========================================================================== #
@@ -269,7 +240,27 @@ def _log_startup_info() -> None:
 
 
 # =========================================================================== #
-# Async main — webhook on PORT, health check on HEALTH_PORT
+# aiohttp request handlers
+# =========================================================================== #
+async def handle_webhook(request: web.Request) -> web.Response:
+    """Receive Telegram updates via POST."""
+    app_ptb: Application = request.app["ptb_app"]
+    try:
+        data = await request.json()
+        update = Update.de_json(data, app_ptb.bot)
+        await app_ptb.process_update(update)
+    except Exception as exc:
+        logger.error("Webhook processing error: %s", exc)
+    return web.Response(text="OK")
+
+
+async def handle_health(request: web.Request) -> web.Response:
+    """Health check — Render uses this to show 'Live'."""
+    return web.Response(text="OK")
+
+
+# =========================================================================== #
+# Main — single aiohttp server for both webhook + health on PORT
 # =========================================================================== #
 async def async_main() -> None:
     global predictor, gemini
@@ -302,60 +293,64 @@ async def async_main() -> None:
     except Exception:
         logger.warning("Gemini init failed — fallback advice will be used.")
 
-    app: Application = (
+    # Build the PTB application (NO updater — webhook only)
+    ptb_app: Application = (
         ApplicationBuilder()
         .token(config.TELEGRAM_BOT_TOKEN)
+        .updater(None)          # ← disables the built-in Updater/polling
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(CommandHandler("help",  help_handler))
-    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    app.add_handler(
+    ptb_app.add_handler(CommandHandler("start", start_handler))
+    ptb_app.add_handler(CommandHandler("help",  help_handler))
+    ptb_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    ptb_app.add_handler(
         MessageHandler(filters.ALL & ~filters.PHOTO & ~filters.COMMAND, non_photo_handler)
     )
-    app.add_error_handler(error_handler)
+    ptb_app.add_error_handler(error_handler)
 
-    # Render assigns PORT for the main service port
-    # We use the same PORT for webhook (Telegram) + health check
     port         = int(os.environ.get("PORT", 10000))
     webhook_path = f"/webhook/{config.WEBHOOK_SECRET}"
     webhook_full = f"{config.WEBHOOK_URL}{webhook_path}"
 
+    # Build aiohttp app
+    web_app = web.Application()
+    web_app["ptb_app"] = ptb_app
+    web_app.router.add_post(webhook_path, handle_webhook)
+    web_app.router.add_get("/healthz", handle_health)
+    # Render also probes "/" sometimes
+    web_app.router.add_get("/", handle_health)
+
     logger.info("Starting on port %d | webhook path: /webhook/***", port)
     print(f"\n🌾 Rice Disease Bot starting on port {port}\n")
 
-    async with app:
-        await app.bot.set_webhook(
+    async with ptb_app:
+        # Register the webhook with Telegram
+        await ptb_app.bot.set_webhook(
             url=webhook_full,
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
         )
-        await app.start()
-        await app.updater.start_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=webhook_path,
-            webhook_url=webhook_full,
-        )
+        await ptb_app.start()
         logger.info("Bot is live ✅")
+
+        # Run aiohttp server until interrupted
+        runner = web.AppRunner(web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
 
         try:
             await asyncio.Event().wait()
         except (KeyboardInterrupt, SystemExit):
             pass
         finally:
-            await app.updater.stop()
-            await app.stop()
+            await runner.cleanup()
+            await ptb_app.stop()
             logger.info("Bot stopped cleanly.")
 
 
 def main() -> None:
-    # Health check server in background thread — Render needs a port to bind
-    # GET /healthz → 200 OK (no secrets exposed)
-    health_thread = threading.Thread(target=_run_health_server, daemon=True)
-    health_thread.start()
-
     asyncio.run(async_main())
 
 
